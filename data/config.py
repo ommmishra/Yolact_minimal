@@ -172,7 +172,8 @@ yolact_base_config = Config({
     'conf_thre': 0.05,
     'nms_thre': 0.5,
     'top_k': 200,
-    'max_detections': 100})
+    'max_detections': 100,
+    'dla_backbone': False})
 
 yolact_im400_config = yolact_base_config.copy({
     'name': 'yolact_im400',

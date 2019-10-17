@@ -1,7 +1,9 @@
+#!/usr/bin/env python 
+# -*- coding:utf-8 -*-
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List
 from data.config import cfg
 from modules.backbone import construct_backbone
 from utils.box_utils import make_anchors
@@ -100,107 +102,20 @@ class PredictionModule(nn.Module):
     def forward(self, x):
         if cfg.extra_head_net is not None:
             x = self.upfeature(x)
-        # aa = x.detach().cpu().numpy()
-        # print(aa.shape)
-        # aa.tofile('109.bin')
 
         conf = self.conf_layer(x).permute(0, 2, 3, 1).contiguous().view(x.size(0), -1, self.num_classes)
-        # aa = self.conf_layer(x).detach().cpu().numpy()
-        # print(aa.shape)
-        # aa.tofile('110.bin')
-
         bbox = self.bbox_layer(x).permute(0, 2, 3, 1).contiguous().view(x.size(0), -1, 4)
-        # aa = self.bbox_layer(x).detach().cpu().numpy()
-        # print(aa.shape)
-        # aa.tofile('111.bin')
-
         coef = self.mask_layer(x).permute(0, 2, 3, 1).contiguous().view(x.size(0), -1, self.coef_dim)
         coef = torch.tanh(coef)
-        # aa = (torch.tanh(self.mask_layer(x))).detach().cpu().numpy()
-        # print(aa.shape)
-        # aa.tofile('112.bin')
 
         return {'box': bbox, 'class': conf, 'coef': coef}
 
 
-class FPN(nn.Module):
-    """
-    Implements a general version of the FPN introduced in https://arxiv.org/pdf/1612.03144.pdf
-    """
-
-    def __init__(self, in_channels):
-        super().__init__()
-        self.interpolation_mode = cfg.fpn.interpolation_mode  # 'bilinear'
-        self.num_downsample = cfg.fpn.num_downsample  # 2
-        self.conv_downsample = cfg.fpn.use_conv_downsample  # True
-        self.num_features = cfg.fpn.num_features
-        self.in_channels = in_channels
-        self.padding = cfg.fpn.pad  # for backward compatability
-
-        self.lat_layers = nn.ModuleList(
-            [nn.Conv2d(x, self.num_features, kernel_size=1) for x in reversed(self.in_channels)])
-        # ModuleList((0): Conv2d(2048, 256, kernel_size=(1, 1), stride=(1, 1))
-        #            (1): Conv2d(1024, 256, kernel_size=(1, 1), stride=(1, 1))
-        #            (2): Conv2d(512, 256, kernel_size=(1, 1), stride=(1, 1)))
-
-        self.pred_layers = nn.ModuleList(
-            [nn.Conv2d(self.num_features, self.num_features, kernel_size=3, padding=self.padding)
-             for _ in self.in_channels])
-        # ModuleList((0): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-        #            (1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-        #            (2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)))
-
-        if self.conv_downsample:
-            self.downsample_layers = nn.ModuleList(
-                [nn.Conv2d(self.num_features, self.num_features, kernel_size=3, padding=1, stride=2)
-                 for _ in range(self.num_downsample)])
-
-        # ModuleList((0): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))  用于下采样
-        #            (1): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1)))
-
-    def forward(self, convouts: List[torch.Tensor]):
-        out = []
-        x = torch.zeros(1, device=convouts[0].device)
-        for i in range(len(convouts)):
-            out.append(x)
-
-        # For backward compatability, the conv layers are stored in reverse but the input and output is
-        # given in the correct order. Thus, use j=-i-1 for the input and output and i for the conv layers.
-        j = len(convouts)  # convouts: C3, C4, C5
-
-        for lat_layer in self.lat_layers:
-            j -= 1
-
-            if j < len(convouts) - 1:
-                _, _, h, w = convouts[j].size()
-                x = F.interpolate(x, size=(h, w), mode=self.interpolation_mode, align_corners=False)
-
-            x = x + lat_layer(convouts[j])
-
-            out[j] = x
-
-        j = len(convouts)
-        for pred_layer in self.pred_layers:
-            j -= 1
-            out[j] = F.relu(pred_layer(out[j]))
-
-        # In the original paper, this takes care of P6
-        if self.conv_downsample:
-            for downsample_layer in self.downsample_layers:
-                out.append(downsample_layer(out[-1]))
-        else:
-            for i in range(self.num_downsample):
-                # Note: this is an untested alternative to out.append(out[-1][:, :, ::2, ::2]).
-                out.append(nn.functional.max_pool2d(out[-1], 1, stride=2))
-
-        return out
-
-
-class Yolact(nn.Module):
+class Yolact_dla(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.backbone = construct_backbone(cfg.backbone)
+        self.backbone = dla_yolact()
 
         if cfg.freeze_bn:
             self.freeze_bn()
@@ -223,8 +138,6 @@ class Yolact(nn.Module):
                    (10): Conv2d(256, 32, kernel_size=(1, 1), stride=(1, 1)))
         cfg.coef_dim: 32
         '''
-
-        self.fpn = FPN([512, 1024, 2048])
         self.selected_layers = [0, 1, 2, 3, 4]
         # create a ModuleList to match with the original pre-trained weights (original model state_dict)
         self.prediction_layers = nn.ModuleList()
@@ -262,15 +175,13 @@ class Yolact(nn.Module):
         self.load_state_dict(state_dict)
 
     def init_weights(self, backbone_path):
-        # Initialize the backbone with the pretrained weights.
-        self.backbone.init_backbone(backbone_path)
-        # Initialize the rest conv layers with xavier
         for name, module in self.named_modules():
-            if isinstance(module, nn.Conv2d) and module not in self.backbone.backbone_modules:
+            if isinstance(module, nn.Conv2d):
                 nn.init.xavier_uniform_(module.weight.data)
-
                 if module.bias is not None:
                     module.bias.data.zero_()
+
+        self.backbone.init_backbone()
 
     def train(self, mode=True):
         super().train(mode)
@@ -290,19 +201,6 @@ class Yolact(nn.Module):
     def forward(self, x):
         with timer.env('backbone'):
             outs = self.backbone(x)
-
-        with timer.env('fpn'):
-            outs = [outs[i] for i in cfg.backbone.selected_layers]
-            outs = self.fpn(outs)
-
-            '''
-            outs:
-            (2, 3, 550, 550) -> backbone -> (2, 256, 138, 138) -> fpn -> [2, 256, 69, 69] P3
-                                            (2, 512, 69, 69)             [2, 256, 35, 35] P4
-                                            (2, 1024, 35, 35)            [2, 256, 18, 18] P5
-                                            (2, 2048, 18, 18)            [2, 256, 9, 9]   P6
-                                                                         [2, 256, 5, 5]   P7
-            '''
 
         with timer.env('proto'):
             # outs[0]: [2, 256, 69, 69], the feature map from P3

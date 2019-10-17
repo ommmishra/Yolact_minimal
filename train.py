@@ -2,6 +2,7 @@ from utils.augmentations import SSDAugmentation, BaseTransform
 from utils.functions import MovingAverage
 from utils import timer
 from modules.build_yolact import Yolact
+from modules.build_yolact_dla import Yolact_dla
 import time
 import torch
 from modules.multi_loss import Multi_Loss
@@ -20,9 +21,9 @@ from data.coco import detection_collate
 
 parser = argparse.ArgumentParser(description='Yolact Training Script')
 parser.add_argument('--config', default='yolact_base_config', help='The config object to use.')
-parser.add_argument('--batch_size', default=8, type=int)
+parser.add_argument('--batch_size', default=2, type=int)
 parser.add_argument('--resume', default=None, type=str, help='The path of checkpoint file to resume training from.')
-parser.add_argument('--val_interval', default=20000, type=int,
+parser.add_argument('--val_interval', default=5000, type=int,
                     help='Val and save the model every [val_interval] iterations, pass -1 to disable.')
 parser.add_argument('--max_keep', default=10, type=int, help='The maximum number of .pth files to keep.')
 
@@ -97,7 +98,22 @@ dataset = COCODetection(image_path=cfg.dataset.train_images,
                         info_file=cfg.dataset.train_info,
                         augmentation=SSDAugmentation())
 
-net = Yolact()
+if cfg.dla_backbone:
+    net = Yolact_dla()
+else:
+    net = Yolact()
+
+# params = list(net.parameters())
+#
+# k = 0
+# for i in params:
+#     l = 1
+#     for j in i.size():
+#         l *= j
+#     print(f'该层参数和：{str(l)}, shape：{str(list(i.size()))}')
+#     k = k + l
+# print("总参数数量和：" + str(k))
+# exit()
 net.train()
 
 # Don't use the timer during training, there's a race condition with multiple GPUs.
