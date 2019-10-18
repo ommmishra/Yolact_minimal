@@ -21,7 +21,7 @@ from data.coco import detection_collate
 
 parser = argparse.ArgumentParser(description='Yolact Training Script')
 parser.add_argument('--config', default='yolact_base_config', help='The config object to use.')
-parser.add_argument('--batch_size', default=2, type=int)
+parser.add_argument('--batch_size', default=8, type=int)
 parser.add_argument('--resume', default=None, type=str, help='The path of checkpoint file to resume training from.')
 parser.add_argument('--val_interval', default=5000, type=int,
                     help='Val and save the model every [val_interval] iterations, pass -1 to disable.')
@@ -103,17 +103,6 @@ if cfg.dla_backbone:
 else:
     net = Yolact()
 
-# params = list(net.parameters())
-#
-# k = 0
-# for i in params:
-#     l = 1
-#     for j in i.size():
-#         l *= j
-#     print(f'该层参数和：{str(l)}, shape：{str(list(i.size()))}')
-#     k = k + l
-# print("总参数数量和：" + str(k))
-# exit()
 net.train()
 
 # Don't use the timer during training, there's a race condition with multiple GPUs.
@@ -147,7 +136,7 @@ start_epoch = iter // epoch_size
 end_epoch = cfg.max_iter // epoch_size + 1
 remain = epoch_size - (iter % epoch_size)
 
-data_loader = data.DataLoader(dataset, args.batch_size, num_workers=8, shuffle=True,
+data_loader = data.DataLoader(dataset, args.batch_size, num_workers=1, shuffle=True,
                               collate_fn=detection_collate, pin_memory=True)
 
 batch_time = MovingAverage()
@@ -180,7 +169,6 @@ try:
             forward_start = time.time()
 
             predictions = net(images)
-
             torch.cuda.synchronize()
             forward_end = time.time()
 

@@ -123,9 +123,9 @@ class COCODetection(data.Dataset):
         if self.augmentation is not None:
             if len(target) > 0:
                 target = np.array(target)
+
                 img, masks, boxes, labels = self.augmentation(img, masks, target[:, :4],
                                                               {'num_crowds': num_crowds, 'labels': target[:, 4]})
-
                 # I stored num_crowds in labels so I didn't have to modify the entirety of augmentations
                 num_crowds = labels['num_crowds']
                 labels = labels['labels']

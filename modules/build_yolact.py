@@ -6,7 +6,6 @@ from data.config import cfg
 from modules.backbone import construct_backbone
 from utils.box_utils import make_anchors
 from utils import timer
-from modules.dla import dla_yolact
 
 torch.cuda.current_device()
 
@@ -200,6 +199,7 @@ class Yolact(nn.Module):
 
     def __init__(self):
         super().__init__()
+        self.anchors = []
         self.backbone = construct_backbone(cfg.backbone)
 
         if cfg.freeze_bn:
@@ -241,11 +241,6 @@ class Yolact(nn.Module):
 
         if cfg.train_semantic:  # True
             self.semantic_seg_conv = nn.Conv2d(256, cfg.num_classes - 1, kernel_size=1)
-
-        self.anchors = []
-        for i, hw in enumerate(cfg.hws):
-            self.anchors += make_anchors(hw[1], hw[0], cfg.backbone.scales[i])
-        self.anchors = torch.Tensor(self.anchors).view(-1, 4).cuda()
 
     def save_weights(self, path):
         torch.save(self.state_dict(), path)
@@ -303,6 +298,10 @@ class Yolact(nn.Module):
                                             (2, 2048, 18, 18)            [2, 256, 9, 9]   P6
                                                                          [2, 256, 5, 5]   P7
             '''
+        if isinstance(self.anchors, list):
+            for i, shape in enumerate([list(aa.shape) for aa in outs]):
+                self.anchors += make_anchors(shape[2], shape[3], cfg.backbone.scales[i])
+            self.anchors = torch.Tensor(self.anchors).view(-1, 4).cuda()
 
         with timer.env('proto'):
             # outs[0]: [2, 256, 69, 69], the feature map from P3
