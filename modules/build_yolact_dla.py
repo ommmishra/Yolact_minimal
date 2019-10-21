@@ -115,6 +115,7 @@ class Yolact_dla(nn.Module):
 
     def __init__(self):
         super().__init__()
+        self.anchors = []
         self.backbone = dla_yolact()
 
         if cfg.freeze_bn:
@@ -155,23 +156,11 @@ class Yolact_dla(nn.Module):
         if cfg.train_semantic:  # True
             self.semantic_seg_conv = nn.Conv2d(256, cfg.num_classes - 1, kernel_size=1)
 
-        self.anchors = []
-        for i, hw in enumerate(cfg.hws):
-            self.anchors += make_anchors(hw[1], hw[0], cfg.backbone.scales[i])
-        self.anchors = torch.Tensor(self.anchors).view(-1, 4).cuda()
-
     def save_weights(self, path):
         torch.save(self.state_dict(), path)
 
     def load_weights(self, path):
         state_dict = torch.load(path)
-
-        for key in list(state_dict.keys()):
-            # 'fpn.downsample_layers.2.weight' and 'fpn.downsample_layers.2.bias' in the pretrained .pth are redundant, remove them
-            if key.startswith('fpn.downsample_layers.'):
-                if cfg.fpn is not None and int(key.split('.')[2]) >= cfg.fpn.num_downsample:
-                    del state_dict[key]
-
         self.load_state_dict(state_dict)
 
     def init_weights(self, backbone_path):
@@ -201,6 +190,11 @@ class Yolact_dla(nn.Module):
     def forward(self, x):
         with timer.env('backbone'):
             outs = self.backbone(x)
+
+        if isinstance(self.anchors, list):
+            for i, shape in enumerate([list(aa.shape) for aa in outs]):
+                self.anchors += make_anchors(shape[2], shape[3], cfg.backbone.scales[i])
+            self.anchors = torch.Tensor(self.anchors).view(-1, 4).cuda()
 
         with timer.env('proto'):
             # outs[0]: [2, 256, 69, 69], the feature map from P3
